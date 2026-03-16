@@ -1,0 +1,39 @@
+# ArchRAG Configuration — OpenAI
+
+embedding:
+  adapter: openai
+  model: text-embedding-3-small
+  dimension: 1536
+
+llm:
+  adapter: openai
+  model: gpt-4o-mini
+  temperature: 0.0
+
+graph_store:
+  adapter: sqlite
+  path: data/archrag.db
+
+document_store:
+  adapter: sqlite
+  path: data/archrag.db
+
+vector_index:
+  adapter: numpy
+
+clustering:
+  adapter: leiden
+  resolution: 1.0
+
+indexing:
+  chunk_size: 1200
+  chunk_overlap: 100
+  max_hierarchy_levels: 5
+  similarity_threshold: 0.7
+
+retrieval:
+  k_per_layer: 5
+
+chnsw:
+  M: 32
+  ef_construction: 100

@@ -1,0 +1,42 @@
+# ArchRAG Configuration
+# See ARCHITECTURE.md for adapter options.
+
+embedding:
+  adapter: ollama                 # sentence_transformer | openai | ollama
+  model: nomic-embed-text
+  base_url: http://localhost:11434
+  dimension: 768
+
+llm:
+  adapter: ollama                 # ollama | openai
+  model: llama3.1:8b
+  base_url: http://localhost:11434
+  temperature: 0.0
+
+graph_store:
+  adapter: sqlite                 # sqlite | in_memory
+  path: data/archrag.db
+
+document_store:
+  adapter: sqlite                 # sqlite | in_memory
+  path: data/archrag.db
+
+vector_index:
+  adapter: numpy                  # numpy (future: faiss)
+
+clustering:
+  adapter: leiden                 # leiden (future: spectral, scan)
+  resolution: 1.0
+
+indexing:
+  chunk_size: 1200
+  chunk_overlap: 100
+  max_hierarchy_levels: 5
+  similarity_threshold: 0.7
+
+retrieval:
+  k_per_layer: 5
+
+chnsw:
+  M: 32
+  ef_construction: 100

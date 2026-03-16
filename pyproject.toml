@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "archrag"
+version = "0.1.0"
+description = "ArchRAG: Attributed Community-based Hierarchical Retrieval-Augmented Generation"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = [
+    "click>=8.1",
+    "pyyaml>=6.0",
+    "numpy>=1.24",
+    "python-dotenv>=1.0",
+    "fastmcp>=2.0",
+]
+
+[project.optional-dependencies]
+ollama = ["ollama>=0.3"]
+openai = ["openai>=1.0"]
+embeddings = ["sentence-transformers>=2.2"]
+clustering = ["leidenalg>=0.10", "igraph>=0.11", "scikit-learn>=1.3"]
+all = [
+    "ollama>=0.3",
+    "openai>=1.0",
+    "sentence-transformers>=2.2",
+    "leidenalg>=0.10",
+    "igraph>=0.11",
+    "scikit-learn>=1.3",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[project.scripts]
+archrag = "archrag.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["archrag*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

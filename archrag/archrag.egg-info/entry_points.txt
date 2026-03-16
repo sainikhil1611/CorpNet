@@ -1,0 +1,2 @@
+[console_scripts]
+archrag = archrag.cli:main
