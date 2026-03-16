@@ -1,4 +1,4 @@
-# ArchRAG
+# CorpNet
 
 An implementation of **ArchRAG: Attributed Community-based Hierarchical Retrieval-Augmented Generation** ([arXiv 2502.09891](https://arxiv.org/abs/2502.09891)).
 
