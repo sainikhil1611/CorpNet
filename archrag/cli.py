@@ -4,8 +4,23 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 
 import click
+
+from archrag.config import AdapterConfigError
+
+
+def _build_orchestrator_or_exit(config_path: str):
+    """Build the orchestrator, exiting cleanly (no traceback) on config errors."""
+    from archrag.config import build_orchestrator
+
+    try:
+        return build_orchestrator(config_path)
+    except AdapterConfigError as exc:
+        sys.exit(f"Error: {exc}")
+    except FileNotFoundError as exc:
+        sys.exit(f"Error: {exc}")
 
 
 @click.group()
@@ -27,9 +42,7 @@ def main(ctx: click.Context, config: str, verbose: bool) -> None:
 @click.pass_context
 def index(ctx: click.Context, corpus: str) -> None:
     """Build the full index from a CORPUS file (JSONL or JSON array)."""
-    from archrag.config import build_orchestrator
-
-    orch = build_orchestrator(ctx.obj["config"])
+    orch = _build_orchestrator_or_exit(ctx.obj["config"])
     orch.index(corpus)
     click.echo("Indexing complete.")
 
@@ -39,9 +52,7 @@ def index(ctx: click.Context, corpus: str) -> None:
 @click.pass_context
 def query(ctx: click.Context, question: str) -> None:
     """Answer a QUESTION using the built index."""
-    from archrag.config import build_orchestrator
-
-    orch = build_orchestrator(ctx.obj["config"])
+    orch = _build_orchestrator_or_exit(ctx.obj["config"])
     answer = orch.query(question)
     click.echo(answer)
 
@@ -51,9 +62,7 @@ def query(ctx: click.Context, question: str) -> None:
 @click.pass_context
 def add(ctx: click.Context, corpus: str) -> None:
     """Add new documents from CORPUS file to an existing index."""
-    from archrag.config import build_orchestrator
-
-    orch = build_orchestrator(ctx.obj["config"])
+    orch = _build_orchestrator_or_exit(ctx.obj["config"])
     documents = orch._load_corpus(corpus)
     orch.add_documents(documents)
     click.echo(f"Added {len(documents)} documents and re-indexed.")
@@ -64,9 +73,7 @@ def add(ctx: click.Context, corpus: str) -> None:
 @click.pass_context
 def remove(ctx: click.Context, entity_name: str) -> None:
     """Remove an entity by NAME from the knowledge graph."""
-    from archrag.config import build_orchestrator
-
-    orch = build_orchestrator(ctx.obj["config"])
+    orch = _build_orchestrator_or_exit(ctx.obj["config"])
     if orch.remove_entity(entity_name):
         click.echo(f"Removed entity: {entity_name}")
     else:
@@ -81,9 +88,7 @@ def remove(ctx: click.Context, entity_name: str) -> None:
 @click.pass_context
 def search(ctx: click.Context, query_str: str, search_type: str) -> None:
     """Search the knowledge graph for QUERY_STR (substring match)."""
-    from archrag.config import build_orchestrator
-
-    orch = build_orchestrator(ctx.obj["config"])
+    orch = _build_orchestrator_or_exit(ctx.obj["config"])
 
     if search_type in ("entities", "all"):
         entities = orch.search_entities(query_str)
@@ -108,12 +113,15 @@ def search(ctx: click.Context, query_str: str, search_type: str) -> None:
 @click.pass_context
 def info(ctx: click.Context) -> None:
     """Show database stats and current configuration."""
-    from archrag.config import build_orchestrator, load_config
+    from archrag.config import load_config
 
     import yaml as _yaml
 
-    cfg = load_config(ctx.obj["config"])
-    orch = build_orchestrator(ctx.obj["config"])
+    try:
+        cfg = load_config(ctx.obj["config"])
+    except FileNotFoundError as exc:
+        sys.exit(f"Error: {exc}")
+    orch = _build_orchestrator_or_exit(ctx.obj["config"])
     st = orch.stats()
 
     click.echo("=== Database Stats ===")

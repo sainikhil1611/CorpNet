@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +27,7 @@ from fastmcp import FastMCP
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(_PROJECT_ROOT / ".env", override=True)
 
-from archrag.config import build_orchestrator
+from archrag.config import AdapterConfigError, build_orchestrator
 from archrag.services.ingestion_queue import IngestionQueue
 
 log = logging.getLogger(__name__)
@@ -51,7 +52,12 @@ _config_path = os.environ.get("ARCHRAG_CONFIG", "config.yaml")
 log.info("Loading config from %s …", _config_path)
 
 log.info("Building orchestrator (embedding, LLM, stores) …")
-_orch = build_orchestrator(_config_path)
+try:
+    _orch = build_orchestrator(_config_path)
+except AdapterConfigError as exc:
+    sys.exit(f"Error: {exc}")
+except FileNotFoundError as exc:
+    sys.exit(f"Error: {exc}")
 log.info("Orchestrator ready.")
 
 log.info("Starting ingestion queue …")

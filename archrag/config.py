@@ -6,6 +6,7 @@ for each port, then wires them into the ArchRAGOrchestrator.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,38 @@ def load_config(path: str = "config.yaml") -> dict[str, Any]:
         return yaml.safe_load(f)
 
 
+class AdapterConfigError(RuntimeError):
+    """Raised when a configured adapter can't be constructed cleanly.
+
+    Callers (CLI, MCP server) should catch this and exit with the
+    message rather than letting a raw traceback surface.
+    """
+
+
+def _check_openai_available() -> None:
+    """Fail cleanly if the 'openai' adapter is selected but unusable.
+
+    Two things are required: the `openai` package (installed via the
+    `openai` extra) and the `OPENAI_API_KEY` environment variable.
+    """
+    try:
+        import openai  # noqa: F401
+    except ImportError as exc:
+        raise AdapterConfigError(
+            "Config selects the 'openai' adapter, but the 'openai' package "
+            "isn't installed.\n"
+            "Install it with: pip install -e '.[openai]'  (or '.[all]')"
+        ) from exc
+
+    if not os.environ.get("OPENAI_API_KEY"):
+        raise AdapterConfigError(
+            "Config selects the 'openai' adapter, but OPENAI_API_KEY is not "
+            "set.\n"
+            "Copy .env.example to .env and fill in OPENAI_API_KEY, or export "
+            "it in your shell."
+        )
+
+
 # ── Adapter factories ──
 
 
@@ -48,6 +81,7 @@ def build_embedding(cfg: dict[str, Any]) -> EmbeddingPort:
         return SentenceTransformerEmbedding(model_name=model)
 
     elif adapter == "openai":
+        _check_openai_available()
         from archrag.adapters.embeddings.openai_embedding import OpenAIEmbedding
         return OpenAIEmbedding(model=model, dimension=dimension)
 
@@ -70,6 +104,7 @@ def build_llm(cfg: dict[str, Any]) -> LLMPort:
         return OllamaLLM(model=model, base_url=base_url, temperature=temperature)
 
     elif adapter == "openai":
+        _check_openai_available()
         from archrag.adapters.llms.openai_llm import OpenAILLM
         return OpenAILLM(model=model, temperature=temperature)
 
