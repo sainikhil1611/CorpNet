@@ -1,161 +1,129 @@
 # CorpNet
 
-An implementation of **ArchRAG: Attributed Community-based Hierarchical Retrieval-Augmented Generation** ([arXiv 2502.09891](https://arxiv.org/abs/2502.09891)).
+An implementation of **ArchRAG: Attributed Community-based Hierarchical Retrieval-Augmented Generation** ([arXiv 2502.09891](https://arxiv.org/abs/2502.09891)) — a graph-based RAG pipeline (Python, `archrag` package) built with a hexagonal / ports-&-adapters architecture. Every external dependency (LLM, embedding model, database, vector index, clustering algorithm) sits behind an abstract port and is swapped via `config.yaml`. Ships as a Click CLI (`archrag`) and a FastMCP server (`archrag/mcp_server.py`, stdio transport).
 
-Built with a **hexagonal / ports & adapters** architecture — every external dependency (LLM, embedding model, database, vector index, clustering algorithm) is behind an abstract port and can be swapped via config.
+## Quick start (devcontainer — recommended)
 
-## Quick Start
-
-### 1. Create and activate the virtual environment
-
-Create environment:
-```powershell
-python -m venv .venv
-```
-
-Use *one* of the three following commands to activate the environment, depending on your specific CLI.
-
-   Activate environment (for Mac/Linux):
+1. Prereqs: [Docker](https://docs.docker.com/get-docker/), [VS Code](https://code.visualstudio.com/) + the "Dev Containers" extension.
+2. Open this folder in VS Code → "Reopen in Container" when prompted. This installs the package in editable mode (`pip install --user -e ".[dev]"`).
+3. `cp .env.example .env` and fill in `OPENAI_API_KEY` (see table below).
+4. `cp config.example.yaml config.yaml` (or bring your own — the tracked `config.yaml` defaults to the OpenAI adapter). Then run:
    ```sh
-   source .venv/bin/activate
+   archrag index corpus.jsonl   # build the index from a sample corpus (create one — see "Manual setup")
+   archrag query "What did Einstein win the Nobel Prize for?"
    ```
+   This is a CLI/stdio tool, not a web server — there's no `localhost:<port>` to open.
 
-   Activate environment (for Windows Command Prompt):
-   ```cmd
-   .venv\Scripts\activate
-   ```
+## Manual setup (no devcontainer)
 
-   Activate environment (for Windows Powershell):
-   ```powershell
-   .\.venv\Scripts\Activate.ps1
-   ```
+```sh
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 
-Install dependencies:
-```powershell
+# Base install (click/pyyaml/numpy/python-dotenv/fastmcp only).
+# Add the extras you need: [openai] [ollama] [embeddings] [clustering] or [all].
 pip install -e ".[all,dev]"
+
+cp .env.example .env             # fill in OPENAI_API_KEY if using the openai adapter
+cp config.example.yaml config.yaml   # or edit the tracked config.yaml directly
 ```
 
-### 2. Set your API key
-
-Create a `.env` file in the project root (loaded automatically via `python-dotenv`):
-
-```
-OPENAI_API_KEY=sk-...
-```
-
-### 3. Configure
-
-Copy the example config and adjust as needed:
-
-```powershell
-copy config.example.yaml config.yaml
-```
-
-Default config uses OpenAI (`gpt-4o-mini` + `text-embedding-3-small`). See [config.example.yaml](config.example.yaml) for all adapter options (Ollama, SentenceTransformers, etc.).
-
-### 4. Prepare a corpus
-
-JSONL file, one document per line:
+Prepare a corpus (JSONL, one document per line):
 
 ```jsonl
 {"text": "Albert Einstein developed the theory of special relativity in 1905."}
 {"text": "Marie Curie discovered polonium and radium."}
 ```
 
-Also supports `{"title": "...", "context": "..."}` format from the original paper, and JSON arrays.
+Also supports `{"title": "...", "context": "..."}` (the format from the original paper) and JSON arrays.
 
-### 5. Run
+Run the CLI:
 
-```powershell
-# Build the full index (KG → hierarchical clustering → C-HNSW)
-archrag index corpus.jsonl
-
-# Ask a question
-archrag query "What did Einstein win the Nobel Prize for?"
+```sh
+archrag index corpus.jsonl                                   # build the full index
+archrag query "What did Einstein win the Nobel Prize for?"   # ask a question
+archrag search "Einstein"                                    # substring search entities
+archrag add corpus.jsonl                                     # add docs to an existing index
+archrag remove "Entity Name"                                  # delete an entity
+archrag info                                                  # show DB stats + current config
 ```
 
-## CLI Reference
+Add `-v` for debug logging, `-c path/to/config.yaml` for a custom config.
 
-| Command | Description |
-|---|---|
-| `archrag index <corpus>` | Build full index from a JSONL / JSON corpus file |
-| `archrag query "<question>"` | Answer a question using hierarchical search + adaptive filtering |
-| `archrag search "<term>"` | Search entities by name (substring match) |
-| `archrag search "<term>" -t chunks` | Search raw text chunks |
-| `archrag search "<term>" -t all` | Search both entities and chunks |
-| `archrag add <corpus>` | Add new documents to an existing index and re-index |
-| `archrag remove "<entity name>"` | Delete an entity and its relations from the KG |
-| `archrag info` | Show database stats and current configuration |
+Run the MCP server (exposes `health`, `index`, `query`, `search`, `add`, `remove`, `reindex`, `info` as MCP tools over stdio — requires `fastmcp`, already a base dependency):
 
-Add `-v` for debug logging, `-c path/to/config.yaml` for a custom config:
-
-```powershell
-archrag -v -c my_config.yaml query "some question"
+```sh
+python -m archrag.mcp_server
 ```
+
+The server initialises the orchestrator eagerly at startup, so a missing `OPENAI_API_KEY` (or a config selecting an uninstalled adapter) now exits immediately with a clear message instead of a traceback. The `add` tool enqueues documents into a thread-safe `IngestionQueue` that auto-flushes every `ARCHRAG_FLUSH_INTERVAL` seconds (default 180) or on-demand via the `reindex` tool; a failed flush requeues the batch instead of losing it.
+
+## Environment variables
+
+| Variable | Required | Purpose | Where to get it |
+|---|---|---|---|
+| `OPENAI_API_KEY` | Only if `config.yaml` selects `adapter: openai` for `embedding` and/or `llm` (the tracked `config.yaml` does, by default) | Auth for the OpenAI embeddings/chat-completions endpoints | https://platform.openai.com/api-keys |
+| `ARCHRAG_CONFIG` | No — defaults to `config.yaml` | Path to the config YAML, read by the MCP server (`archrag/mcp_server.py`) | n/a |
+| `ARCHRAG_FLUSH_INTERVAL` | No — defaults to `180` | Seconds between automatic `IngestionQueue` flushes in the MCP server | n/a |
+
+`config.example.yaml`'s default adapter is **Ollama** (no API key needed) but requires a reachable daemon at `http://localhost:11434` (`nomic-embed-text` + `llama3.1:8b`) — not bundled or verified here.
+
+## Testing
+
+```sh
+python -m pytest -q
+```
+
+Expected: `34 passed` (24 pre-existing + 3 for the `IngestionQueue.flush()` requeue-on-failure fix + 7 for the openai adapter/env validation fix). The suite is fully offline — every test uses in-memory/mocked ports (`MockLLM`, `MockEmbedding`, fake `openai` modules injected via `monkeypatch`), so no live OpenAI or Ollama calls are needed.
+
+## Deployment
+
+Build the production image: `docker build -t corpnet .`
+Run it (mount your own `config.yaml`, corpus file, and a `data/` volume for persistence):
+```sh
+docker run --rm --env-file .env \
+  -v $(pwd)/config.yaml:/app/config.yaml:ro \
+  -v $(pwd)/corpus.jsonl:/app/corpus.jsonl:ro \
+  -v $(pwd)/data:/app/data \
+  corpnet index corpus.jsonl
+```
+
+Run the MCP server instead by overriding the command:
+`docker run --rm -i --env-file .env corpnet python -m archrag.mcp_server`
+
+This container runs on any host (Fly.io, Render, a VPS with Docker) — see
+[DEPLOYMENT.md](../DEPLOYMENT.md) in the Projects root for the full walkthrough.
+
+## Known limitations
+
+- **OpenAI-dependent runtime paths are unverified without a real key.** The `openai` adapter's *clean-failure* behavior (missing package, missing `OPENAI_API_KEY`) is tested and verified end-to-end (unit tests + a live CLI/Docker run). Actually calling the OpenAI API (real `archrag index`/`query` with `adapter: openai`) was not exercised — no key was available in this environment.
+- **Ollama default is unverified.** `config.example.yaml` requires a reachable Ollama daemon at `localhost:11434`; no daemon was available to test against.
+- **The production image is large.** It installs the `[all]` extra (torch, sentence-transformers, scikit-learn, etc.) so any adapter combination works without a rebuild; trim to `[openai]`/`[ollama]` only if you know which adapters you'll use.
+- **No HTTP port.** The CLI is invoked per-command; the MCP server speaks MCP over stdio, not HTTP — there's nothing to `curl` or publish a port for.
+
+---
 
 ## Architecture
 
-### Paper Summary
+### Paper summary
 
-**ArchRAG** (Attributed Community-based Hierarchical RAG) is a graph-based Retrieval-Augmented Generation system with two phases:
+**ArchRAG** is a graph-based RAG system with two phases:
 
-#### Offline Indexing
+**Offline indexing**
 1. **KG Construction** — Chunk corpus → LLM extracts entities & relations → merge into a Knowledge Graph.
 2. **LLM-based Hierarchical Clustering** — Augment KG (KNN edges by attribute similarity) → weighted community detection (Leiden) → LLM summarises each community → build higher-level graph of communities → repeat → produces a hierarchical tree Δ of Attributed Communities (ACs).
 3. **C-HNSW Index** — Map entities (layer 0) and ACs (layers 1…L) to embeddings → build a Community-based HNSW index with intra-layer links (M nearest neighbours) and inter-layer links (nearest neighbour in adjacent layer).
 
-#### Online Retrieval
+**Online retrieval**
 1. **Hierarchical Search** — Embed query → start from top layer, greedy traverse intra-layer links to find k nearest neighbours per layer, follow inter-layer links downward → collect results R₀…R_L.
 2. **Adaptive Filtering-based Generation** — For each Rᵢ, LLM extracts an analysis report with relevance scores → sort and merge reports → LLM produces final answer.
 
-### Hexagonal (Ports & Adapters) Design
+### Hexagonal (ports & adapters) design
 
-The core insight: **anything that touches an external model or a persistent layer goes behind a port**. The domain logic depends only on abstract interfaces. Adapters are swapped via configuration.
-
-```
-                    ┌─────────────────────────────────────┐
-                    │          DOMAIN / SERVICES           │
-                    │                                      │
-                    │  KGConstructionService                │
-                    │  HierarchicalClusteringService        │
-                    │  CHNSWBuildService                    │
-                    │  HierarchicalSearchService            │
-                    │  AdaptiveFilteringService             │
-                    │  ArchRAGOrchestrator                  │
-                    │                                      │
-                    │  Domain Models (Entity, Relation,     │
-                    │   KnowledgeGraph, Community,          │
-                    │   CommunityHierarchy, CHNSWIndex)     │
-                    └──┬───┬───┬───┬───┬───┬───────────────┘
-                       │   │   │   │   │   │
-            ┌──────────┘   │   │   │   │   └──────────┐
-            ▼              ▼   ▼   ▼   ▼              ▼
-     ┌──────────┐  ┌──────┐ ┌─┐ ┌─┐ ┌──────┐  ┌──────────┐
-     │EmbeddingP│  │LLM P │ │G│ │V│ │DocStr│  │Clustering│
-     │   ort    │  │ ort  │ │r│ │e│ │Port  │  │   Port   │
-     └────┬─────┘  └──┬───┘ │a│ │c│ └──┬───┘  └────┬─────┘
-          │            │     │p│ │t│    │            │
-          ▼            ▼     │h│ │o│    ▼            ▼
-   ┌────────────┐ ┌────────┐│S│ │r│┌────────┐ ┌──────────┐
-   │Nomic       │ │OpenAI  ││t│ │I││JSON    │ │Leiden    │
-   │SentenceTfm │ │Ollama  ││o│ │n││SQLite  │ │Spectral  │
-   │OpenAI Embed│ │Llama   ││r│ │d││        │ │SCAN      │
-   └────────────┘ └────────┘│e│ │e│└────────┘ └──────────┘
-                            │P│ │x│
-                            │o│ │P│
-                            │r│ │o│
-                            │t│ │r│
-                            └┬┘ │t│
-                             │  └┬┘
-                             ▼   ▼
-                        ┌──────┐┌───────┐
-                        │SQLite││Numpy  │
-                        │Neo4j ││FAISS  │
-                        └──────┘└───────┘
-```
+The core insight: anything that touches an external model or a persistent layer goes behind a port. The domain logic depends only on abstract interfaces; adapters are swapped via `config.yaml`.
 
 ```
-CLI (click)
+CLI (click) / MCP server (fastmcp, stdio)
  │
  ▼
 Orchestrator
@@ -172,112 +140,25 @@ Orchestrator
    Swappable Adapters
 ```
 
-### Port Interfaces
+| Port | Responsibility | Default adapter | Swap-in options |
+|------|---------------|------------------|-----------------|
+| **EmbeddingPort** | Text → vector | `sentence_transformer` | `openai`, `ollama` |
+| **LLMPort** | Prompt → completion | `ollama` | `openai` |
+| **GraphStorePort** | Persist KG (entities + relations) | `sqlite` | `in_memory` (tests) |
+| **DocumentStorePort** | Persist corpus chunks, community summaries, hierarchy metadata | `sqlite` | `in_memory` (tests) |
+| **VectorIndexPort** | ANN index for C-HNSW | `numpy` | — |
+| **ClusteringPort** | Weighted graph → communities | `leiden` | — |
 
-| Port | Responsibility | Key Methods |
-|------|---------------|-------------|
-| **EmbeddingPort** | Text → vector | `embed(text) → list[float]`, `embed_batch(texts) → list[list[float]]` |
-| **LLMPort** | Prompt → completion | `generate(prompt, system?) → str`, `generate_json(prompt, system?) → dict` |
-| **GraphStorePort** | Persist KG (entities + relations) | `save_entities()`, `save_relations()`, `get_entity()`, `get_neighbours()`, `get_subgraph()` |
-| **VectorIndexPort** | ANN index for C-HNSW | `add_vectors()`, `search()`, `save()`, `load()` |
-| **DocumentStorePort** | Persist corpus chunks, community summaries, hierarchy metadata | `save_document()`, `get_document()`, `save_hierarchy()`, `load_hierarchy()` |
-| **ClusteringPort** | Weighted graph → communities | `cluster(nodes, edges, weights) → list[set[str]]` |
+### Key design decisions
 
-### Ports & Adapters
-
-| Port | Default Adapter | Swap-in Options |
-|------|----------------|-----------------|
-| **EmbeddingPort** | `SentenceTransformerAdapter` (nomic-embed-text) | `OpenAIEmbeddingAdapter`, `OllamaEmbeddingAdapter` |
-| **LLMPort** | `OllamaAdapter` (llama3.1) | `OpenAIAdapter`, `AnthropicAdapter` |
-| **GraphStorePort** | `SQLiteGraphStore` | `InMemoryGraphStore` (tests), future: Neo4j |
-| **VectorIndexPort** | `NumpyVectorIndex` (pure-python C-HNSW) | `FAISSVectorIndex` |
-| **DocumentStorePort** | `SQLiteDocumentStore` | `JSONDocumentStore`, `InMemoryDocStore` (tests) |
-| **ClusteringPort** | `LeidenAdapter` | `SpectralClusteringAdapter`, `SCANAdapter` |
-
-### Domain Models
-
-| Model | Fields |
-|-------|--------|
-| **TextChunk** | id, text, metadata, source_doc |
-| **Entity** | id, name, description, embedding? |
-| **Relation** | id, source_id, target_id, description, weight? |
-| **KnowledgeGraph** | entities: dict, relations: list |
-| **Community** | id, level, member_entity_ids, summary, embedding? |
-| **CommunityHierarchy** | levels: list[list[Community]], parent_map |
-| **CHNSWLayer** | level, node_ids, intra_links, inter_links_down |
-| **CHNSWIndex** | layers: list[CHNSWLayer], embeddings: dict |
-| **SearchResult** | node_id, level, distance, text |
-| **AnalysisReport** | points: list[{description, score}] |
-
-### Services
-
-| Service | Description |
-|---------|-------------|
-| **KGConstructionService** | Chunks corpus → LLM extracts entities/relations → persisted KG |
-| **HierarchicalClusteringService** | Iterative: augment graph, cluster (Leiden), LLM summarises, repeat → CommunityHierarchy |
-| **CHNSWBuildService** | Embeds entities + communities, builds intra/inter-layer links → CHNSWIndex |
-| **HierarchicalSearchService** | Embeds query, traverses C-HNSW top-down → SearchResults per layer |
-| **AdaptiveFilteringService** | LLM filters results per layer, merges, generates final answer |
-| **ArchRAGOrchestrator** | Wires all services; blue/green snapshot for lock-free concurrent reads |
-
-### Key Design Decisions
-
-1. **Pure domain** — `models.py` has zero imports from adapters or external libs.
+1. **Pure domain** — `domain/models.py` has zero imports from adapters or external libs.
 2. **Ports are ABCs** — every service constructor takes ports as arguments (dependency injection).
-3. **Adapters are leaf nodes** — they import external libraries but nothing imports them except the config factory.
+3. **Adapters are leaf nodes** — they import external libraries but nothing imports them except the config factory (`archrag/config.py`), and now via a clean `AdapterConfigError` if the openai adapter is selected without the package or `OPENAI_API_KEY`.
 4. **Config-driven wiring** — `config.py` reads YAML → instantiates the right adapter for each port → passes them to services.
-5. **C-HNSW in pure Python/NumPy** — avoids the custom FAISS fork from the paper; later swappable to FAISS via VectorIndexPort.
-6. **Testability** — every service can be tested with `InMemory*` adapters and a mock LLM port.
+5. **C-HNSW in pure Python/NumPy** — avoids the custom FAISS fork from the paper; swappable to FAISS later via `VectorIndexPort`.
+6. **Testability** — every service is tested with `InMemory*` adapters and mock LLM/embedding ports; the full suite runs offline in ~4s.
 
-## Configuration
-
-```yaml
-embedding:
-  adapter: sentence_transformer  # | openai | ollama
-  model: nomic-embed-text-v1.5
-  dimension: 768
-
-llm:
-  adapter: ollama                # | openai
-  model: llama3.1:8b
-  base_url: http://localhost:11434
-  temperature: 0.0
-
-graph_store:
-  adapter: sqlite                # | in_memory
-  path: data/archrag.db
-
-document_store:
-  adapter: sqlite                # | in_memory | json
-  path: data/archrag.db
-
-vector_index:
-  adapter: numpy                 # | faiss
-  distance_metric: cosine
-
-clustering:
-  adapter: leiden                # | spectral | scan
-  resolution: 1.0
-
-indexing:
-  chunk_size: 1200
-  chunk_overlap: 100
-  max_hierarchy_levels: 5
-  knn_k: auto                   # auto = avg node degree
-  similarity_threshold: 0.7
-
-retrieval:
-  k_per_layer: 5
-  ef_search: 100
-
-chnsw:
-  M: 32                         # max connections per node
-  ef_construction: 100
-```
-
-See [config.example.yaml](config.example.yaml) for the full annotated template.
-
-## Project Structure
+### Project structure
 
 ```
 archrag/
@@ -286,23 +167,20 @@ archrag/
 ├── adapters/
 │   ├── embeddings/           # SentenceTransformer, OpenAI, Ollama
 │   ├── llms/                 # OpenAI, Ollama
-│   ├── stores/               # SQLite & in-memory (graph + document)
-│   ├── indexes/              # NumPy vector index
-│   └── clustering/           # Leiden
-├── services/                 # Business logic (KG, clustering, C-HNSW, search, filtering)
-├── prompts/                  # LLM prompt templates
-├── config.py                 # YAML config + adapter factory + dotenv loading
-└── cli.py                    # Click CLI entry point
-tests/                        # 21 unit tests with mock ports
+│   ├── stores/                # SQLite & in-memory (graph + document)
+│   ├── indexes/               # NumPy vector index
+│   └── clustering/            # Leiden
+├── services/                  # Business logic (KG, clustering, C-HNSW, search, filtering, ingestion queue)
+├── prompts/                   # LLM prompt templates
+├── config.py                  # YAML config + adapter factory + dotenv loading + clean adapter validation
+├── cli.py                     # Click CLI entry point
+└── mcp_server.py               # FastMCP server (stdio) — health/index/query/search/add/remove/reindex/info
+tests/                          # pytest suite, all offline against mock ports
 ```
 
-## Tests
+See [config.example.yaml](config.example.yaml) for the full annotated config template.
 
-```powershell
-python -m pytest tests/ -v
-```
-
-## Paper Reference
+## Paper reference
 
 > **ArchRAG: Attributed Community-based Hierarchical Retrieval-Augmented Generation**
 > [arXiv:2502.09891](https://arxiv.org/abs/2502.09891)
