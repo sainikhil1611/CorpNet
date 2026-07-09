@@ -57,7 +57,12 @@ class IngestionQueue:
         return count
 
     def flush(self) -> int:
-        """Immediately index all pending documents.  Returns count flushed."""
+        """Immediately index all pending documents.  Returns count flushed.
+
+        If ``reindex_fn`` raises, the batch is requeued (placed ahead of
+        anything enqueued since) instead of being dropped, and the
+        exception is re-raised so the caller knows the flush failed.
+        """
         with self._lock:
             if not self._pending:
                 return 0
@@ -66,7 +71,15 @@ class IngestionQueue:
             self._last_flush = time.monotonic()
 
         log.info("Flushing %d document(s)", len(batch))
-        self._reindex_fn(batch)
+        try:
+            self._reindex_fn(batch)
+        except Exception:
+            with self._lock:
+                self._pending[0:0] = batch
+            log.exception(
+                "Reindex failed for %d document(s); requeued for retry", len(batch)
+            )
+            raise
         return len(batch)
 
     def pending_count(self) -> int:
