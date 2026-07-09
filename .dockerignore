@@ -1,0 +1,12 @@
+.git
+.gitignore
+.devcontainer
+.pytest_cache
+__pycache__
+*.pyc
+*.egg-info
+.venv
+.env
+data/
+corpus.jsonl
+tests/
