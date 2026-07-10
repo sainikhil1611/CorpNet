@@ -84,12 +84,30 @@ def test_build_llm_openai_succeeds_when_package_and_key_present(monkeypatch):
 
 
 def test_non_openai_adapters_are_unaffected(monkeypatch):
-    """The validation is scoped to the openai adapter only."""
+    """The validation is scoped to the openai adapter only: the
+    sentence_transformer embedding adapter must not raise AdapterConfigError
+    just because OPENAI_API_KEY is unset."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    # in_memory doesn't touch build_embedding/build_llm, but sentence_transformer
-    # embedding adapter must not raise AdapterConfigError just because
-    # OPENAI_API_KEY is unset.
-    from archrag.config import build_graph_store
 
-    store = build_graph_store({"adapter": "in_memory"})
-    assert store is not None
+    # sentence-transformers isn't installed in this environment (and is
+    # heavy even when it is), so inject a fake module — same pattern used
+    # above for the 'openai' package — to keep this test fast and offline.
+    import types
+
+    fake_st_module = types.ModuleType("sentence_transformers")
+
+    class _FakeSentenceTransformer:
+        def __init__(self, model_name: str, trust_remote_code: bool = False):
+            self._model_name = model_name
+
+        def to(self, device: str):
+            return self
+
+        def get_sentence_embedding_dimension(self) -> int:
+            return 384
+
+    fake_st_module.SentenceTransformer = _FakeSentenceTransformer  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "sentence_transformers", fake_st_module)
+
+    embedding = build_embedding({"adapter": "sentence_transformer"})
+    assert embedding.dimension() == 384

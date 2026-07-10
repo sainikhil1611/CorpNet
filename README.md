@@ -74,7 +74,7 @@ The server initialises the orchestrator eagerly at startup, so a missing `OPENAI
 python -m pytest -q
 ```
 
-Expected: `34 passed` (24 pre-existing + 3 for the `IngestionQueue.flush()` requeue-on-failure fix + 7 for the openai adapter/env validation fix). The suite is fully offline — every test uses in-memory/mocked ports (`MockLLM`, `MockEmbedding`, fake `openai` modules injected via `monkeypatch`), so no live OpenAI or Ollama calls are needed.
+Expected: `35 passed` (24 pre-existing + 4 for the `IngestionQueue.flush()`/timer-loop requeue-and-retry-on-failure fix + 7 for the openai adapter/env validation fix). The suite is fully offline — every test uses in-memory/mocked ports (`MockLLM`, `MockEmbedding`, fake `openai`/`sentence_transformers` modules injected via `monkeypatch`), so no live OpenAI or Ollama calls are needed.
 
 ## Deployment
 
@@ -88,8 +88,13 @@ docker run --rm --env-file .env \
   corpnet index corpus.jsonl
 ```
 
-Run the MCP server instead by overriding the command:
-`docker run --rm -i --env-file .env corpnet python -m archrag.mcp_server`
+Run the MCP server instead by overriding the entrypoint (the image's
+`ENTRYPOINT` is `archrag`, so plain positional args get appended to it —
+override `--entrypoint` too, not just the command, or Click rejects the
+resulting `archrag python -m archrag.mcp_server`):
+```sh
+docker run --rm -i --env-file .env --entrypoint python3 corpnet -m archrag.mcp_server
+```
 
 This container runs on any host (Fly.io, Render, a VPS with Docker) — see
 [DEPLOYMENT.md](../DEPLOYMENT.md) in the Projects root for the full walkthrough.
