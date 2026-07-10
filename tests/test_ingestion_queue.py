@@ -11,6 +11,8 @@ successful flush.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from archrag.services.ingestion_queue import IngestionQueue
@@ -80,3 +82,45 @@ def test_flush_requeues_ahead_of_newly_enqueued_documents():
     queue.enqueue([{"text": "new"}])
 
     assert queue.pending_count() == 2
+
+
+def test_timer_loop_survives_flush_failure_and_retries_next_interval():
+    """A transient reindex_fn failure during an *auto*-flush (triggered by
+    the background timer thread, not a direct flush() call) must not kill
+    the daemon thread. The next interval must retry and eventually
+    succeed instead of auto-flush silently stopping forever."""
+    attempts: list[list[dict]] = []
+
+    def flaky_reindex(batch: list[dict]) -> None:
+        attempts.append(list(batch))
+        if len(attempts) == 1:
+            raise RuntimeError("simulated transient failure during auto-flush")
+        # second+ attempt succeeds
+
+    queue = IngestionQueue(
+        reindex_fn=flaky_reindex,
+        flush_interval=0.05,
+        poll_interval=0.02,
+    )
+    try:
+        queue.enqueue([{"text": "doc1"}])
+
+        # Wait for the first (failing) auto-flush attempt.
+        deadline = time.monotonic() + 2.0
+        while len(attempts) < 1 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert len(attempts) == 1, "first auto-flush attempt never happened"
+
+        # The timer thread must still be alive after the failure.
+        assert queue._timer.is_alive(), "timer thread died after auto-flush failure"
+
+        # Wait for the second (successful) auto-flush attempt.
+        deadline = time.monotonic() + 2.0
+        while len(attempts) < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert len(attempts) == 2, (
+            "timer thread did not retry after the first auto-flush failure"
+        )
+        assert queue.pending_count() == 0
+    finally:
+        queue._shutdown = True

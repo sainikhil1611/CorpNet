@@ -26,16 +26,23 @@ class IngestionQueue:
         them (e.g. ``orchestrator.add_documents``).
     flush_interval:
         Seconds between automatic flushes.  A background daemon thread
-        checks every 10 s whether the interval has elapsed.
+        checks every *poll_interval* seconds whether the interval has
+        elapsed.
+    poll_interval:
+        Seconds between checks of whether ``flush_interval`` has elapsed.
+        Defaults to 10 s; mainly exposed so tests can use a short value
+        instead of waiting on real wall-clock time.
     """
 
     def __init__(
         self,
         reindex_fn: Callable[[list[dict[str, Any]]], None],
         flush_interval: float = 180.0,
+        poll_interval: float = 10.0,
     ) -> None:
         self._reindex_fn = reindex_fn
         self._flush_interval = flush_interval
+        self._poll_interval = poll_interval
 
         self._lock = threading.Lock()
         self._pending: list[dict[str, Any]] = []
@@ -96,12 +103,24 @@ class IngestionQueue:
     # ── background timer ──
 
     def _timer_loop(self) -> None:
-        """Background loop: check every 10 s if flush_interval has elapsed."""
+        """Background loop: check every *poll_interval* s if flush_interval
+        has elapsed.
+
+        A failed auto-flush must not kill this daemon thread — flush()
+        already requeues the batch on failure, so we only need to catch
+        and log here to let periodic flushing keep retrying on the next
+        tick instead of silently stopping forever.
+        """
         while not self._shutdown:
-            time.sleep(10)
+            time.sleep(self._poll_interval)
             with self._lock:
                 elapsed = time.monotonic() - self._last_flush
                 has_pending = len(self._pending) > 0
             if has_pending and elapsed >= self._flush_interval:
                 log.info("Auto-flush triggered (%.0f s elapsed)", elapsed)
-                self.flush()
+                try:
+                    self.flush()
+                except Exception:
+                    log.exception(
+                        "Auto-flush failed; will retry on next interval"
+                    )
